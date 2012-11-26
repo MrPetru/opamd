@@ -12,6 +12,7 @@ import (
     "io"
     "time"
     "bufio"
+    "flag"
 )
 
 var repo repository
@@ -21,7 +22,14 @@ var videoPlayer string
 
 func main() {
     // get configuration
-    confValues := ParseConfigFile("./opamd.conf")
+    var confPath = flag.String("conf", "./opamd.conf", "path to configuration file")
+    
+    flag.Parse()
+    confValues, err := ParseConfigFile(*confPath)
+    if err != nil {
+        fmt.Printf("error parsing config file\n")
+        return
+    }
     port := confValues["port"]
     
     imageEditor = confValues["imageEditor"]
@@ -211,10 +219,11 @@ func (r *repository) Update(projectName string) error{
 }
 
 // config parser
-func ParseConfigFile(confPath string) map[string]string {
+func ParseConfigFile(confPath string) (map[string]string, error) {
     confFile, err := os.Open(confPath)
     if err != nil {
         fmt.Printf("error on opening config file: %s\n", err)
+        return nil, err
     }
     
     buf := bufio.NewReader(confFile)
@@ -227,5 +236,5 @@ func ParseConfigFile(confPath string) map[string]string {
         tmp := strings.Split(l, " = ")
         values[tmp[0]] = strings.Replace(tmp[1], "\n", "", -1)
     }
-    return values
+    return values, nil
 }
