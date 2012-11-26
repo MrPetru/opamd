@@ -11,24 +11,30 @@ import (
     "errors"
     "io"
     "time"
+    "bufio"
 )
 
 var repo repository
-var imageEditor = "gimp"
-var blendEditor = "blender"
-var videoPlayer = "ffplay"
+var imageEditor string
+var blendEditor string
+var videoPlayer string
 
 func main() {
     // get configuration
-    port := ":8083"
+    confValues := ParseConfigFile("./opamd.conf")
+    port := confValues["port"]
+    
+    imageEditor = confValues["imageEditor"]
+    blendEditor = confValues["blendEditor"]
+    videoPlayer = confValues["videoPlayer"]
 
-    repo.path = "/tmp"
-    repo.remotePath = "http://opam.kino3d.org/hg"
+    repo.path = confValues["localrepo"]
+    repo.remotePath = confValues["remoterepo"]
     repo.inProgress = false
 
     // listen for requests on localhost
     http.HandleFunc("/", ServeLocalData)
-    fmt.Print(http.ListenAndServe("localhost"+port, nil))
+    fmt.Print(http.ListenAndServe("localhost:" + port, nil))
 }
 
 func ServeLocalData(out http.ResponseWriter, in *http.Request) {
@@ -202,4 +208,24 @@ func (r *repository) Update(projectName string) error{
         }
     }
     return nil
+}
+
+// config parser
+func ParseConfigFile(confPath string) map[string]string {
+    confFile, err := os.Open(confPath)
+    if err != nil {
+        fmt.Printf("error on opening config file: %s\n", err)
+    }
+    
+    buf := bufio.NewReader(confFile)
+    values := make(map[string]string, 0)
+    for {
+        l, err := buf.ReadString('\n')
+        if err != nil {
+            break
+        }
+        tmp := strings.Split(l, " = ")
+        values[tmp[0]] = strings.Replace(tmp[1], "\n", "", -1)
+    }
+    return values
 }
