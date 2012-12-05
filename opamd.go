@@ -11,36 +11,61 @@ import (
     "errors"
     "io"
     "time"
-    "bufio"
     "flag"
+    "gconf/conf"
 )
 
 var repo repository
-var imageEditor string
-var blendEditor string
-var videoPlayer string
+var eseguible map[string]string
 
 func main() {
     // get configuration
+    port := "8083"
+    remoterepo := "http://opam.kino3d.org/hg"
+    
     var confPath = flag.String("conf", "./opamd.conf", "path to configuration file")
     
     flag.Parse()
-    confValues, err := ParseConfigFile(*confPath)
+    
+    confFile, err := conf.ReadConfigFile(*confPath)
     if err != nil {
-        fmt.Printf("error parsing config file\n")
+        fmt.Print(err)
         return
     }
-    port := confValues["port"]
     
-    imageEditor = confValues["imageEditor"]
-    blendEditor = confValues["blendEditor"]
-    videoPlayer = confValues["videoPlayer"]
+    eseguible = make(map[string]string, 0)
+    
+    confSections := confFile.GetSections()
+    
+    for _, s := range(confSections) {
 
-    repo.path = confValues["localrepo"]
-    repo.remotePath = confValues["remoterepo"]
+        extensions, err := confFile.GetString(s, "extensions")
+        if err != nil {
+            continue
+        }
+        
+        path, err := confFile.GetString(s, "path")
+        if err != nil {
+            path = s
+        }
+        extensions = strings.Replace(extensions, " ", "", -1)
+        
+        for _, ext := range(strings.Split(extensions, ",")){
+            eseguible[ext] = path
+        }
+    }
+
+    localrepo, err := confFile.GetString("defaults", "localrepo")
+    if err != nil {
+        fmt.Printf("can't get value for localrepo, check config file, default section\n")
+    }
+    repo.path = localrepo
+    
+    repo.remotePath = remoterepo
     repo.inProgress = false
 
     // listen for requests on localhost
+    fmt.Printf("configuration is copleted, now listening for requests.\n")
     http.HandleFunc("/", ServeLocalData)
     fmt.Print(http.ListenAndServe("localhost:" + port, nil))
 }
@@ -90,24 +115,24 @@ func ServeLocalData(out http.ResponseWriter, in *http.Request) {
         // create working copy of file
         completeWorkingFilePath, err := updateWorkingCopy(repo.path, projectName, filePath)
         if err != nil {
-            fmt.Print(err)
-            return
+            if os.IsNotExist(err) {
+            } else {
+                fmt.Print(err)
+                return
+            }
         }
-
-        //fmt.Printf("%s\n", completeWorkingFilePath)
 
         fileExt := filepath.Ext(completeWorkingFilePath)
         fileExt = fileExt[1:]
-        //fmt.Printf("%s\n", fileExt)
-
-        switch fileExt = strings.ToLower(fileExt); fileExt {
-            case "jpg", "png", "xcf", "tif", "tiff", "jpeg":
-                err = runCmd(imageEditor, completeWorkingFilePath)
-            case "blend":
-                err = runCmd(blendEditor, completeWorkingFilePath)
-            case "mov", "mp4", "avi", "mv2", "mts", "mxf":
-                err = runCmd(videoPlayer, completeWorkingFilePath)
+        
+        cmd, ok := eseguible[fileExt]
+        if !ok {
+            fmt.Printf("no programm was configured to open a %s file\n", fileExt)
+            fmt.Printf("please check you config file\n")
         }
+        
+        err = runCmd(cmd, completeWorkingFilePath)
+
     }
 }
 
@@ -122,7 +147,7 @@ func updateWorkingCopy(repoPath, projectName, filePath string) (string, error) {
 
     src, err := os.Open(completeFilePath)
     if err != nil {
-        return "", err
+        return completeWorkingFilePath, err
     }
     defer src.Close()
 
@@ -216,25 +241,4 @@ func (r *repository) Update(projectName string) error{
         }
     }
     return nil
-}
-
-// config parser
-func ParseConfigFile(confPath string) (map[string]string, error) {
-    confFile, err := os.Open(confPath)
-    if err != nil {
-        fmt.Printf("error on opening config file: %s\n", err)
-        return nil, err
-    }
-    
-    buf := bufio.NewReader(confFile)
-    values := make(map[string]string, 0)
-    for {
-        l, err := buf.ReadString('\n')
-        if err != nil {
-            break
-        }
-        tmp := strings.Split(l, " = ")
-        values[tmp[0]] = strings.Replace(tmp[1], "\n", "", -1)
-    }
-    return values, nil
 }
