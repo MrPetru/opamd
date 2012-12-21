@@ -13,6 +13,7 @@ import (
     "time"
     "flag"
     "gconf/conf"
+    "encoding/json"
 )
 
 var repo repository
@@ -70,6 +71,12 @@ func main() {
     fmt.Print(http.ListenAndServe("localhost:" + port, nil))
 }
 
+type resultMessage struct {
+    Status string `json:"status"`
+    Msg string `json:"msg"`
+    Updates []string `json:"updates"`
+}
+
 func ServeLocalData(out http.ResponseWriter, in *http.Request) {
 
     command := in.URL.Path[1:]
@@ -81,26 +88,27 @@ func ServeLocalData(out http.ResponseWriter, in *http.Request) {
         err := in.ParseForm()
         if err != nil {
             fmt.Print(err)
+            SendResult(out,  in, "error", "unknown command")
             return
         }
 
-        for k, _ := range in.Form {
-            if k == "" {
-                fmt.Printf("no path was found in request data\n")
-                break
-            }
-            index := strings.Index(k, "/")
-            if index < 0 {
-                fmt.Printf("requested path is to short\n")
-                break
-            }
-            projectName = k[:index]
-            filePath = k[index+1:]
-            break
+        if p, ok := in.Form["path"]; ok && len(p) == 1 {
+            filePath = p[0]
         }
+        
+        index := strings.Index(filePath, "/")
+        if index < 0 {
+            fmt.Printf("requested path is to short\n")
+            SendResult(out,  in, "error", "requested path is to short")
+            return
+        }
+        
+        projectName = filePath[:index]
+        filePath = filePath[index+1:]
 
         if filePath == ""  || projectName == "" {
-            fmt.Printf("no enought info in request path\n")
+            fmt.Printf("no enough info in request path\n")
+            SendResult(out,  in, "error", "no enough info in request path")
             return
         }
 
@@ -109,6 +117,7 @@ func ServeLocalData(out http.ResponseWriter, in *http.Request) {
         if err != nil {
             fmt.Print(err)
             fmt.Printf("error when updating repository")
+            SendResult(out,  in, "error", err.Error())
             return
         }
 
@@ -116,8 +125,10 @@ func ServeLocalData(out http.ResponseWriter, in *http.Request) {
         completeWorkingFilePath, err := updateWorkingCopy(repo.path, projectName, filePath)
         if err != nil {
             if os.IsNotExist(err) {
+                SendResult(out,  in, "error", err.Error())
+                return
             } else {
-                fmt.Print(err)
+                SendResult(out,  in, "error", err.Error())
                 return
             }
         }
@@ -129,11 +140,51 @@ func ServeLocalData(out http.ResponseWriter, in *http.Request) {
         if !ok {
             fmt.Printf("no programm was configured to open a %s file\n", fileExt)
             fmt.Printf("please check you config file\n")
+            SendResult(out,  in, "error", "can't open file of this type, check config file")
+            return
         }
         
+        SendResult(out,  in, "ok", "editing file " + filePath)
+        
         err = runCmd(cmd, completeWorkingFilePath)
-
+        if err != nil {
+            fmt.Printf("error is = %v", err)
+        }
     }
+}
+
+func SendResult(out http.ResponseWriter, in *http.Request, status, msg string) {
+
+    message := new(resultMessage)
+    message.Updates = make([]string, 0)
+    
+    message.Status = status
+    message.Msg = msg
+    
+    jsonMessage, _ := json.Marshal(message)
+    
+    conn, _, err := out.(http.Hijacker).Hijack()
+	if err != nil {
+		http.Error(out, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Don't forget to close the connection:
+	defer conn.Close()
+    const TimeFormat = "Mon, 02 Jan 2006 15:04:05 GMT"
+    
+    conn.Write([]byte("HTTP/1.0 200 OK\n"))
+    conn.Write([]byte("Access-Control-Allow-Origin: " + in.Header["Origin"][0] + "\n"))
+    conn.Write([]byte("Content-Type: application/json; charset=utf-8\n"))
+    conn.Write([]byte("Date: " + time.Now().UTC().Format(TimeFormat) + "\n"))
+    conn.Write([]byte("Transfer-Encoding: chunked\n\n"))
+
+    conn.Write([]byte(jsonMessage))
+    
+//    out.Header().Set("Content-Type","application/json; charset=utf-8")
+//    out.Header().Set("Access-Control-Allow-Origin", "http://localhost:8081")
+//    fmt.Println(out.Header())
+//    fmt.Fprint(out, string(jsonMessage))
 }
 
 func updateWorkingCopy(repoPath, projectName, filePath string) (string, error) {
@@ -147,6 +198,7 @@ func updateWorkingCopy(repoPath, projectName, filePath string) (string, error) {
 
     src, err := os.Open(completeFilePath)
     if err != nil {
+        fmt.Printf("%v\n", err)
         return completeWorkingFilePath, err
     }
     defer src.Close()
@@ -166,20 +218,22 @@ func updateWorkingCopy(repoPath, projectName, filePath string) (string, error) {
     }
 
     if dstModTime.Before(srcModTime) {
-        fmt.Printf("need to update file\n")
+        fmt.Printf("updating working file...\n")
 
         dst, err := os.Create(completeWorkingFilePath)
         if err != nil {
+            fmt.Printf("%v\n", err)
             return "", err
         }
         defer dst.Close()
 
         _, err = io.Copy(dst, src)
         if err != nil {
+            fmt.Printf("%v\n", err)
             return "", err
         }
     } else {
-        fmt.Printf("working copy is newver that file in repository\n")
+        fmt.Printf("working file doesn't need an update\n")
     }
 
     return completeWorkingFilePath, nil
@@ -205,8 +259,8 @@ type repository struct {
 func (r *repository) Update(projectName string) error{
 
     if r.inProgress {
-        fmt.Printf("another instance has blocked this repo. Retry after a while.")
-        return errors.New("update in progress by another instance")
+        fmt.Printf("repo update in progress by another instance\n")
+        return errors.New("repo update in progress by another instance")
     }
 
     r.inProgress = true
@@ -223,21 +277,23 @@ func (r *repository) Update(projectName string) error{
     } else {
 		if !fd.IsDir() {
 			fmt.Printf("found file, need directory\n")
-			return errors.New("found file, need directory\n")
+			return errors.New("found a file, need directory\n")
 			}
 	}
 
     if !cloned {
-        fmt.Printf("need to clone project repo\n")
+        fmt.Printf("cloning proj to local repo\n")
         err = runCmd("hg", "clone", r.remotePath + "/" + projectName, path.Join(r.path, projectName))
         if err != nil {
-            return err
+            fmt.Printf("error when coloning project to local repo (%s)\n", err.Error())
+            return errors.New("error when coloning project to local repo (" + err.Error() + ")")
         }
     } else {
-        fmt.Printf("can be updated\n")
+        fmt.Printf("updating...\n")
         err = runCmd("hg", "pull", "-u", "-R", path.Join(r.path, projectName))
         if err != nil {
-            return err
+            fmt.Printf("error on update project (%s)\n", err.Error())
+            return errors.New("error on update project (" + err.Error() + ")")
         }
     }
     return nil
