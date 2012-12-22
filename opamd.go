@@ -66,7 +66,7 @@ func main() {
     repo.inProgress = false
 
     // listen for requests on localhost
-    fmt.Printf("configuration is copleted, now listening for requests.\n")
+    fmt.Printf("configuration complete, now listening for requests.\n")
     http.HandleFunc("/", ServeLocalData)
     fmt.Print(http.ListenAndServe("localhost:" + port, nil))
 }
@@ -140,7 +140,7 @@ func ServeLocalData(out http.ResponseWriter, in *http.Request) {
         if !ok {
             fmt.Printf("no programm was configured to open a %s file\n", fileExt)
             fmt.Printf("please check you config file\n")
-            SendResult(out,  in, "error", "can't open file of this type, check config file")
+            SendResult(out,  in, "error", "unknown file type, check config file")
             return
         }
         
