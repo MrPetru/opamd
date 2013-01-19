@@ -67,7 +67,8 @@ func main() {
 
     // listen for requests on localhost
     fmt.Printf("configuration complete, now listening for requests.\n")
-    http.HandleFunc("/", ServeLocalData)
+    http.HandleFunc("/open", ServeLocalData)
+    http.HandleFunc("/createdirectory", CreateAssetDirectory)
     fmt.Print(http.ListenAndServe("localhost:" + port, nil))
 }
 
@@ -77,79 +78,128 @@ type resultMessage struct {
     Updates []string `json:"updates"`
 }
 
-func ServeLocalData(out http.ResponseWriter, in *http.Request) {
-
-    command := in.URL.Path[1:]
+func CreateAssetDirectory(out http.ResponseWriter, in *http.Request) {
 
     var filePath string
     var projectName string
 
-    if command == "open" {
-        err := in.ParseForm()
-        if err != nil {
-            fmt.Print(err)
-            SendResult(out,  in, "error", "unknown command")
+    err := in.ParseForm()
+    if err != nil {
+        fmt.Print(err)
+        SendResult(out,  in, "error", "unknown command")
+        return
+    }
+
+    if p, ok := in.Form["path"]; ok && len(p) == 1 {
+        filePath = p[0]
+    }
+    
+    index := strings.Index(filePath, "/")
+    if index < 0 {
+        fmt.Printf("requested path is to short\n")
+        SendResult(out,  in, "error", "requested path is to short")
+        return
+    }
+    
+    projectName = filePath[:index]
+    filePath = filePath[index+1:]
+
+    if filePath == ""  || projectName == "" {
+        fmt.Printf("no enough info in request path\n")
+        SendResult(out,  in, "error", "no enough info in request path")
+        return
+    }
+    
+    directory := filepath.Dir(filePath)
+    
+    completeDirectoryPath := filepath.Join(repo.path, projectName, directory)
+    
+    _, err = os.Stat(path.Join(repo.path, projectName))
+    if err != nil {
+        if os.IsNotExist(err) {
             return
         }
+    }
+    
+    // create all directories
+    err = os.MkdirAll(completeDirectoryPath, 0777)
+    if err != nil {
+        fmt.Printf("on creating folders: %v\n", err)
+    }
+    
+    SendResult(out,  in, "ok", "")
+    return
+}
 
-        if p, ok := in.Form["path"]; ok && len(p) == 1 {
-            filePath = p[0]
-        }
-        
-        index := strings.Index(filePath, "/")
-        if index < 0 {
-            fmt.Printf("requested path is to short\n")
-            SendResult(out,  in, "error", "requested path is to short")
+func ServeLocalData(out http.ResponseWriter, in *http.Request) {
+
+    var filePath string
+    var projectName string
+
+    err := in.ParseForm()
+    if err != nil {
+        fmt.Print(err)
+        SendResult(out,  in, "error", "unknown command")
+        return
+    }
+
+    if p, ok := in.Form["path"]; ok && len(p) == 1 {
+        filePath = p[0]
+    }
+    
+    index := strings.Index(filePath, "/")
+    if index < 0 {
+        fmt.Printf("requested path is to short\n")
+        SendResult(out,  in, "error", "requested path is to short")
+        return
+    }
+    
+    projectName = filePath[:index]
+    filePath = filePath[index+1:]
+
+    if filePath == ""  || projectName == "" {
+        fmt.Printf("no enough info in request path\n")
+        SendResult(out,  in, "error", "no enough info in request path")
+        return
+    }
+
+    // update repo
+    err = repo.Update(projectName)
+    if err != nil {
+        fmt.Print(err)
+        fmt.Printf("error when updating repository")
+        SendResult(out,  in, "error", err.Error())
+        return
+    }
+
+    // create working copy of file
+    completeWorkingFilePath, err := updateWorkingCopy(repo.path, projectName, filePath)
+    if err != nil {
+        if os.IsNotExist(err) {
+            SendResult(out,  in, "error", err.Error())
             return
-        }
-        
-        projectName = filePath[:index]
-        filePath = filePath[index+1:]
-
-        if filePath == ""  || projectName == "" {
-            fmt.Printf("no enough info in request path\n")
-            SendResult(out,  in, "error", "no enough info in request path")
-            return
-        }
-
-        // update repo
-        err = repo.Update(projectName)
-        if err != nil {
-            fmt.Print(err)
-            fmt.Printf("error when updating repository")
+        } else {
             SendResult(out,  in, "error", err.Error())
             return
         }
+    }
 
-        // create working copy of file
-        completeWorkingFilePath, err := updateWorkingCopy(repo.path, projectName, filePath)
-        if err != nil {
-            if os.IsNotExist(err) {
-                SendResult(out,  in, "error", err.Error())
-                return
-            } else {
-                SendResult(out,  in, "error", err.Error())
-                return
-            }
-        }
-
-        fileExt := filepath.Ext(completeWorkingFilePath)
-        fileExt = fileExt[1:]
-        
-        cmd, ok := eseguible[fileExt]
-        if !ok {
-            fmt.Printf("no programm was configured to open a %s file\n", fileExt)
-            fmt.Printf("please check you config file\n")
-            SendResult(out,  in, "error", "unknown file type, check config file")
-            return
-        }
-        
-        SendResult(out,  in, "ok", "editing file " + filePath)
-        
-        err = runCmd(cmd, completeWorkingFilePath)
-        if err != nil {
-            fmt.Printf("error is = %v", err)
-        }
+    fileExt := filepath.Ext(completeWorkingFilePath)
+    fileExt = fileExt[1:]
+    
+    cmd, ok := eseguible[fileExt]
+    if !ok {
+        fmt.Printf("no programm was configured to open a %s file\n", fileExt)
+        fmt.Printf("please check you config file\n")
+        SendResult(out,  in, "error", "unknown file type, check config file")
+        return
+    }
+    
+    SendResult(out,  in, "ok", "editing file " + filePath)
+    
+    err = runCmd(cmd, completeWorkingFilePath)
+    if err != nil {
+        fmt.Printf("error is = %v", err)
     }
 }
 
