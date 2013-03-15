@@ -21,7 +21,7 @@ var eseguible map[string]string
 
 func main() {
 
-	fmt.Printf("running configuration process, pleas wait :) ... \n")
+	fmt.Printf("running configuration process, please wait :) ... \n")
 
 	// get configuration
 	port := "8083"
