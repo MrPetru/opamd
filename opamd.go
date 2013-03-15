@@ -5,7 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"goconf/conf"
+	"github.com/maponet/utils/conf"
 	"io"
 	"net/http"
 	"os"
@@ -20,15 +20,19 @@ var repo repository
 var eseguible map[string]string
 
 func main() {
+
+	fmt.Printf("running configuration process, pleas wait :) ... \n")
+
 	// get configuration
 	port := "8083"
-	remoterepo := "http://opam.kino3d.org/hg"
+	remoterepo := "http://localhost:8083/hg"
 
 	var confPath = flag.String("conf", "./opamd.conf", "path to configuration file")
 
 	flag.Parse()
 
-	confFile, err := conf.ReadConfigFile(*confPath)
+	config := conf.NewConfig()
+	err := config.ParseFile(*confPath)
 	if err != nil {
 		fmt.Print(err)
 		return
@@ -36,16 +40,16 @@ func main() {
 
 	eseguible = make(map[string]string, 0)
 
-	confSections := confFile.GetSections()
+	confSections := config.GetSections()
 
 	for _, s := range confSections {
 
-		extensions, err := confFile.GetString(s, "extensions")
+		extensions, err := config.GetString(s, "extensions")
 		if err != nil {
 			continue
 		}
 
-		path, err := confFile.GetString(s, "path")
+		path, err := config.GetString(s, "path")
 		if err != nil {
 			path = s
 		}
@@ -56,7 +60,7 @@ func main() {
 		}
 	}
 
-	localrepo, err := confFile.GetString("defaults", "localrepo")
+	localrepo, err := config.GetString("defaults", "localrepo")
 	if err != nil {
 		fmt.Printf("can't get value for localrepo, check config file, default section\n")
 	}
@@ -65,10 +69,20 @@ func main() {
 	repo.remotePath = remoterepo
 	repo.inProgress = false
 
+	//username, err := config.GetString("user", "username")
+	//if err != nil {
+	//	panic(err)
+	//}
+	//password, err := config.GetString("user", "userpass")
+	//if err != nil {
+	//	panic(err)
+	//}
+
 	// listen for requests on localhost
 	fmt.Printf("configuration complete, now listening for requests.\n")
 	http.HandleFunc("/open", ServeLocalData)
 	http.HandleFunc("/createdirectory", CreateAssetDirectory)
+	http.HandleFunc("/hg/", repoProxy)
 	fmt.Print(http.ListenAndServe("localhost:"+port, nil))
 }
 
