@@ -8,7 +8,7 @@ import (
 	"net"
 	"io"
 	"encoding/base64"
-	"time"
+	//"time"
 )
 
 func repoProxy(out http.ResponseWriter, in *http.Request) {
@@ -62,7 +62,7 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 	//count := 0
 	for {
 		data := make([]byte, bufferLength)
-		rConn.SetReadDeadline(time.Now().Add(3000*time.Millisecond))
+		//rConn.SetReadDeadline(time.Now().Add(10000*time.Millisecond))
 		n, err:= rConn.Read(data)
 		//log.Debug(string(data[:n]))
 		//bufResult.Write(data[:n])
