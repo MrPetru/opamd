@@ -8,6 +8,8 @@ import (
 	"net"
 	"io"
 	"encoding/base64"
+	"strconv"
+	"strings"
 	//"time"
 )
 
@@ -20,7 +22,7 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 
 	remoteUrl := "opam.kino3d.org:80"
 
-	log.SetLevel("ERROR")
+	log.SetLevel("DEBUG")
 
 	remoteHost := remoteUrl
 	getHeader := fmt.Sprintf("GET %s HTTP/1.1\n", in.RequestURI)
@@ -57,6 +59,26 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 		return
 	}
 	defer conn.Close()
+
+	data, chunked, bodySize := readHeaders(rConn)
+	log.Debug("data=%x\nchunked=%v\nbodySize=%v", data, chunked, bodySize)
+	if !chunked {
+		body := make([]byte, bodySize)
+		_, err := rConn.Read(body)
+		fmt.Printf("body=%x", body)
+		if err != nil {
+			fmt.Printf("header error=%v", err)
+		}
+		conn.Write(data)
+		conn.Write(body)
+	} else {
+		readChunck(rConn)
+		readChunck(rConn)
+		readChunck(rConn)
+		readChunck(rConn)
+		readChunck(rConn)
+	}
+	return
 
 	//bufResult := &bytes.Buffer{}
 	//count := 0
@@ -97,4 +119,78 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 		}
 	}
 
+}
+
+
+func readHeaders(conn net.Conn) ([]byte, bool, int) {
+	//headers := make(map[string]string,0)
+	singleByte := make([]byte, 1,1)
+	headerData := make([]byte, 0)
+
+	newLine := byte('\n')
+	//previousLine := make([]byte, 0)
+	currentLine := make([]byte, 0)
+
+	bodySize := 0
+	chunked := false
+
+	var err error
+
+	r := strings.NewReplacer("Content-Length: ", "", "\r", "", "\n", "", "Transfer-Encoding: ", "")
+
+	for {
+		for {
+			_, err = conn.Read(singleByte)
+			currentLine = append(currentLine, singleByte...)
+			headerData = append(headerData, singleByte...)
+			if err != nil {
+				fmt.Printf("found error %v", err)
+				break
+			}
+			if singleByte[0] == newLine {
+				break
+			}
+		}
+		currentListeString := string(currentLine)
+		tmp := r.Replace(currentListeString)
+		if len(tmp)+2 < len(currentListeString) {
+			if tmp == "chunked" {
+				chunked = true
+			} else {
+				bodySize, err = strconv.Atoi(tmp)
+				if err != nil {
+					fmt.Printf("can't convert %s to int [%v]", tmp, err)
+				}
+			}
+		}
+		if len(currentLine) <= 2 {
+			break
+		}
+		currentLine = make([]byte, 0)
+	}
+
+	return headerData, chunked, bodySize
+}
+
+func readChunck(conn net.Conn) {
+	singleByte := make([]byte, 1,1)
+	currentLine := make([]byte, 0)
+	newLine := byte('\n')
+	var err error
+
+	for {
+		_, err = conn.Read(singleByte)
+		if err != nil {
+			fmt.Printf("found error %v", err)
+			break
+		}
+		currentLine = append(currentLine, singleByte...)
+		if singleByte[0] == newLine {
+			break
+		}
+	}
+
+	fmt.Printf("chunck string=%s", string(currentLine))
+	fmt.Printf("chunck byte=%x\n", currentLine)
+	fmt.Printf("length=%v\n", len(currentLine))
 }
