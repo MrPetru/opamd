@@ -6,7 +6,7 @@ import (
 	"github.com/maponet/utils/log"
 	"bytes"
 	"net"
-	"io"
+	//"io"
 	"encoding/base64"
 	"strconv"
 	"strings"
@@ -22,7 +22,7 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 
 	remoteUrl := "opam.kino3d.org:80"
 
-	log.SetLevel("DEBUG")
+	log.SetLevel("ERROR")
 
 	remoteHost := remoteUrl
 	getHeader := fmt.Sprintf("GET %s HTTP/1.1\n", in.RequestURI)
@@ -33,8 +33,6 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 		panic(err)
 	}
 	defer rConn.Close()
-
-	bufferLength := 1430
 
 	encoder := base64.NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 	encodedString := encoder.EncodeToString([]byte("default:defaultdefault"))
@@ -52,6 +50,7 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 		panic(err)
 	}
 
+	// prendiamo il controllo della connessione in uscita
 	conn, _, err := out.(http.Hijacker).Hijack()
 	if err != nil {
 		http.Error(out, err.Error(), http.StatusInternalServerError)
@@ -60,75 +59,79 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 	}
 	defer conn.Close()
 
+	// inizio lettura e scrittura dei dati dalla connessione remota a quella locale
 	data, chunked, bodySize := readHeaders(rConn)
+	conn.Write(data)
 	log.Debug("data=%x\nchunked=%v\nbodySize=%v", data, chunked, bodySize)
 	if !chunked {
 		body := make([]byte, bodySize)
-		_, err := rConn.Read(body)
-		fmt.Printf("body=%x", body)
-		if err != nil {
-			fmt.Printf("header error=%v", err)
+		if bodySize > 0 {
+			n, err := rConn.Read(body)
+			//fmt.Printf("body=%x", body)
+			if err != nil {
+				fmt.Printf("header error=%v", err)
+			}
+			conn.Write(body[:n])
+			for n < bodySize {
+				bodySize = bodySize - n
+				//fmt.Printf("\nread error 1_1 (read only %d to read %d bytes)\n", n, bodySize)
+				tmp := make([]byte, bodySize)
+				n, _ = rConn.Read(tmp)
+				//fmt.Printf("\nread error 1_2 (read only %d to read %d bytes)\n", n, bodySize)
+				conn.Write(tmp[:n])
+			}
 		}
-		conn.Write(data)
-		conn.Write(body)
 	} else {
-		readChunck(rConn)
-		readChunck(rConn)
-		readChunck(rConn)
-		readChunck(rConn)
-		readChunck(rConn)
-	}
-	return
 
-	//bufResult := &bytes.Buffer{}
-	//count := 0
-	for {
-		data := make([]byte, bufferLength)
-		//rConn.SetReadDeadline(time.Now().Add(10000*time.Millisecond))
-		n, err:= rConn.Read(data)
-		//log.Debug(string(data[:n]))
-		//bufResult.Write(data[:n])
-		conn.Write(data[:n])
-		//if n > 1 {
-		//	if (data[n-2] == 13 && data[n-1] == 10) || (n < bufferLength) {
-		//	//if (n < bufferLength) {
-		//		log.Debug("found end of body")
-		//		break
-		//	}
-		//}
-		if err != nil {
-			if err != io.EOF {
-				//to, ok := err.(net.Error)
-				//if ok {
-				//	if to.Timeout() {
-				//		log.Error("time out (%v), retrying ...", err)
-				//		if count >= 5 {
-				//			break
-				//		}
-				//		count++
-				//		//break
-				//		continue
-				//	}
-				//}
-				log.Debug("%v", err)
-				break
-			} else {
-				log.Debug("found end of file")
+		// qui vengono letti i chunck se vengono usati
+		for {
+			data, chunckSize, lenSize := readChunck(rConn)
+			conn.Write(data)
+
+			for chunckSize > uint64(1430) {
+				toRead := 1430 - lenSize
+				chunckSize = chunckSize - uint64(toRead)
+				chunck := make([]byte, toRead)
+				lenSize = 0
+				n, _ := rConn.Read(chunck)
+				conn.Write(chunck[:n])
+				for n < toRead {
+					toRead = toRead - n
+					//fmt.Printf("\nread error 2_1 (read only %d to read %d bytes)\n", n, toRead)
+					tmp := make([]byte, toRead)
+					n, _ = rConn.Read(tmp)
+					//fmt.Printf("\nread error 2_2 (read only %d to read %d bytes)\n", n, toRead)
+					conn.Write(tmp[:n])
+				}
+			}
+
+			chunck := make([]byte, chunckSize+2)
+			toRead := chunckSize + 2
+			n, _ := rConn.Read(chunck)
+			conn.Write(chunck[:n])
+			for uint64(n) < toRead {
+				toRead = toRead - uint64(n)
+				//fmt.Printf("\nread error 3_1 (read only %d to read %d bytes)\n", n, toRead)
+				tmp := make([]byte, toRead)
+				n, _ = rConn.Read(tmp)
+				//fmt.Printf("\nread error 3_2 (read only %d to read %d bytes)\n", n, toRead)
+				conn.Write(tmp[:n])
+			}
+
+			if chunckSize == uint64(0) {
 				break
 			}
 		}
 	}
-
+	return
 }
 
-
-func readHeaders(conn net.Conn) ([]byte, bool, int) {
-	//headers := make(map[string]string,0)
+// readHeaders identifica i header della risposta remota
+func readHeaders(rconn net.Conn) ([]byte, bool, int) {
 	singleByte := make([]byte, 1,1)
 	headerData := make([]byte, 0)
 
 	newLine := byte('\n')
-	//previousLine := make([]byte, 0)
 	currentLine := make([]byte, 0)
 
 	bodySize := 0
@@ -140,11 +143,11 @@ func readHeaders(conn net.Conn) ([]byte, bool, int) {
 
 	for {
 		for {
-			_, err = conn.Read(singleByte)
+			_, err = rconn.Read(singleByte)
 			currentLine = append(currentLine, singleByte...)
 			headerData = append(headerData, singleByte...)
 			if err != nil {
-				fmt.Printf("found error %v", err)
+				fmt.Printf("connection read error [%v]\n", err)
 				break
 			}
 			if singleByte[0] == newLine {
@@ -159,7 +162,7 @@ func readHeaders(conn net.Conn) ([]byte, bool, int) {
 			} else {
 				bodySize, err = strconv.Atoi(tmp)
 				if err != nil {
-					fmt.Printf("can't convert %s to int [%v]", tmp, err)
+					fmt.Printf("can't convert %s to int [%v]\n", tmp, err)
 				}
 			}
 		}
@@ -172,25 +175,40 @@ func readHeaders(conn net.Conn) ([]byte, bool, int) {
 	return headerData, chunked, bodySize
 }
 
-func readChunck(conn net.Conn) {
+func readChunck(rconn net.Conn) ([]byte, uint64, int){
 	singleByte := make([]byte, 1,1)
 	currentLine := make([]byte, 0)
+	var size uint64
 	newLine := byte('\n')
 	var err error
 
 	for {
-		_, err = conn.Read(singleByte)
+		n, err := rconn.Read(singleByte)
 		if err != nil {
-			fmt.Printf("found error %v", err)
-			break
+			if err != nil || n != 1 {
+				fmt.Printf("connection read error [%v]\n", err)
+				break
+			}
 		}
-		currentLine = append(currentLine, singleByte...)
+		currentLine = append(currentLine, singleByte[:n]...)
 		if singleByte[0] == newLine {
 			break
 		}
 	}
 
-	fmt.Printf("chunck string=%s", string(currentLine))
-	fmt.Printf("chunck byte=%x\n", currentLine)
-	fmt.Printf("length=%v\n", len(currentLine))
+	//fmt.Printf("curent line hex=%x\n", currentLine)
+	if len(currentLine) > 2 {
+		//fmt.Printf("curent line -2 hex=%x\n", currentLine[:len(currentLine)-2])
+		size, err = strconv.ParseUint(string(currentLine[:len(currentLine)-2]), 16, 64)
+		if err != nil {
+			fmt.Printf("can not get chunck size [%v)]\n", err)
+		}
+	} else {
+		size = uint64(0)
+	}
+	lenSize := len(currentLine)
+	//fmt.Printf("size string = %s, hex=%x\n",string(currentLine[len(currentLine)-2]), currentLine[len(currentLine)-2])
+	//fmt.Printf("chunck size=%v\n", size)
+
+	return currentLine, size, lenSize
 }
