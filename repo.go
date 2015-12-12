@@ -20,7 +20,9 @@ func repoProxy(out http.ResponseWriter, in *http.Request) {
 	//username = "default"
 	//password = "defaultdefault"
 
-	remoteUrl := "opam.kino3d.org:80"
+	//remoteUrl := "opam.kino3d.org:80"
+//	remoteUrl := "v1.mapoers.net:80"
+	remoteUrl := "scantlight.com:8082"
 
 	log.SetLevel("ERROR")
 
