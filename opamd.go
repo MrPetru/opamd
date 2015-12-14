@@ -25,7 +25,8 @@ func main() {
 
 	// get configuration
 	port := "8083"
-	remoterepo := "http://localhost:8083/hg"
+//	remoterepo := "http://localhost:8083/hg"
+	remoterepo := "http://scantlight.com:8083/hg"
 
 	var confPath = flag.String("conf", "./opamd.conf", "path to configuration file")
 
@@ -347,7 +348,7 @@ func (r *repository) Update(projectName string) error {
 
 	if !cloned {
 		fmt.Printf("cloning proj to local repo\n")
-		err = runCmd("hg", "clone", r.remotePath+"/"+projectName, path.Join(r.path, projectName))
+		err = runCmd("hg", "--debug", "clone", r.remotePath+"/"+projectName, path.Join(r.path, projectName))
 		if err != nil {
 			fmt.Printf("error when coloning project to local repo (%s)\n", err.Error())
 			return errors.New("error when coloning project to local repo (" + err.Error() + ")")
